@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Elementor → Podio Integration
  * Description: Sends Elementor form submissions to Podio.
- * Version: 1.3.1
+ * Version: 1.4
  * Author: Towfique Elahe
  * Author URI: https://towfiqueelahe.com/
  */
@@ -1148,14 +1148,15 @@ function epod_format_date_for_podio( $date_string ) {
     if ( empty( $date_string ) ) {
         return '';
     }
-    
+
     $timestamp = strtotime( $date_string );
     if ( $timestamp === false ) {
         epod_log( 'WARNING: Could not parse date: ' . $date_string );
         return '';
     }
-    
-    return date( 'Y-m-d 12:00:00', $timestamp );
+
+    // Podio REQUIRES full datetime
+    return date( 'Y-m-d H:i:s', $timestamp );
 }
 
 /**

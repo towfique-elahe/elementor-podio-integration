@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Elementor → Podio Integration
  * Description: Sends Elementor form submissions to Podio.
- * Version: 1.2
+ * Version: 1.3.1
  * Author: Towfique Elahe
  * Author URI: https://towfiqueelahe.com/
  */
@@ -59,7 +59,16 @@ function epod_register_settings() {
     
     register_setting(
         'epod_settings_group',
-        'epod_app_token',
+        'epod_username',
+        [
+            'type'              => 'string',
+            'sanitize_callback' => 'sanitize_text_field',
+        ]
+    );
+    
+    register_setting(
+        'epod_settings_group',
+        'epod_password',
         [
             'type'              => 'string',
             'sanitize_callback' => 'sanitize_text_field',
@@ -90,6 +99,34 @@ function epod_register_settings() {
         [
             'type'              => 'array',
             'sanitize_callback' => 'epod_sanitize_debug_log',
+        ]
+    );
+    
+    // Store OAuth tokens
+    register_setting(
+        'epod_settings_group',
+        'epod_access_token',
+        [
+            'type'              => 'string',
+            'sanitize_callback' => 'sanitize_text_field',
+        ]
+    );
+    
+    register_setting(
+        'epod_settings_group',
+        'epod_refresh_token',
+        [
+            'type'              => 'string',
+            'sanitize_callback' => 'sanitize_text_field',
+        ]
+    );
+    
+    register_setting(
+        'epod_settings_group',
+        'epod_token_expires',
+        [
+            'type'              => 'integer',
+            'sanitize_callback' => 'absint',
         ]
     );
 }
@@ -145,12 +182,23 @@ function epod_render_settings_page() {
 
             <tr>
                 <th scope="row">
-                    <label for="epod_app_token">Podio App Token</label>
+                    <label for="epod_username">Podio Username (Email)</label>
                 </th>
                 <td>
-                    <input type="password" id="epod_app_token" name="epod_app_token"
-                        value="<?php echo esc_attr( get_option( 'epod_app_token' ) ); ?>" class="regular-text" />
-                    <p class="description">Your Podio App Token.</p>
+                    <input type="email" id="epod_username" name="epod_username"
+                        value="<?php echo esc_attr( get_option( 'epod_username' ) ); ?>" class="regular-text" />
+                    <p class="description">Your Podio account email/username.</p>
+                </td>
+            </tr>
+
+            <tr>
+                <th scope="row">
+                    <label for="epod_password">Podio Password</label>
+                </th>
+                <td>
+                    <input type="password" id="epod_password" name="epod_password"
+                        value="<?php echo esc_attr( get_option( 'epod_password' ) ); ?>" class="regular-text" />
+                    <p class="description">Your Podio account password.</p>
                 </td>
             </tr>
 
@@ -160,9 +208,10 @@ function epod_render_settings_page() {
                 </th>
                 <td>
                     <input type="text" id="epod_form_name" name="epod_form_name"
-                        value="<?php echo esc_attr( get_option( 'epod_form_name', 'New Form' ) ); ?>"
+                        value="<?php echo esc_attr( get_option( 'epod_form_name', 'Submit Deal' ) ); ?>"
                         class="regular-text" />
-                    <p class="description">Enter the name of the Elementor form to process (default: "New Form").</p>
+                    <p class="description">Enter the exact name of the Elementor form to process (default: "Submit
+                        Deal").</p>
                 </td>
             </tr>
 
@@ -180,6 +229,63 @@ function epod_render_settings_page() {
 
         <?php submit_button(); ?>
     </form>
+
+    <!-- Token Status Section -->
+    <div class="notice notice-info" style="margin-top: 20px;">
+        <h3>Authentication Status</h3>
+        <?php
+        $access_token = get_option( 'epod_access_token' );
+        $refresh_token = get_option( 'epod_refresh_token' );
+        $token_expires = get_option( 'epod_token_expires' );
+        
+        if ( empty( $access_token ) ) {
+            echo '<p><strong>Status:</strong> <span style="color: #dc3232;">Not authenticated</span></p>';
+            echo '<p>Please save your credentials above and then click the button below to authenticate.</p>';
+        } else {
+            $current_time = time();
+            $expires_in = $token_expires - $current_time;
+            $expires_human = human_time_diff( $current_time, $token_expires );
+            
+            if ( $expires_in > 0 ) {
+                echo '<p><strong>Status:</strong> <span style="color: #46b450;">Authenticated</span></p>';
+                echo '<p><strong>Token expires in:</strong> ' . $expires_human . '</p>';
+            } else {
+                echo '<p><strong>Status:</strong> <span style="color: #f0b849;">Token expired</span></p>';
+                echo '<p>The access token has expired. Please re-authenticate.</p>';
+            }
+            
+            if ( ! empty( $refresh_token ) ) {
+                echo '<p><strong>Refresh token:</strong> Available</p>';
+            }
+        }
+        ?>
+
+        <form method="post" style="margin-top: 15px;">
+            <?php wp_nonce_field( 'epod_auth_action', 'epod_auth_nonce' ); ?>
+            <?php if ( empty( $access_token ) ) : ?>
+            <input type="submit" name="epod_authenticate" class="button button-primary" value="Authenticate with Podio">
+            <?php else : ?>
+            <input type="submit" name="epod_refresh_token" class="button" value="Refresh Token">
+            <input type="submit" name="epod_revoke_token" class="button" value="Revoke Token"
+                onclick="return confirm('Are you sure you want to revoke the token?');">
+            <?php endif; ?>
+        </form>
+    </div>
+
+    <?php
+    // Handle authentication actions
+    if ( isset( $_POST['epod_authenticate'] ) || isset( $_POST['epod_refresh_token'] ) || isset( $_POST['epod_revoke_token'] ) ) {
+        if ( wp_verify_nonce( $_POST['epod_auth_nonce'], 'epod_auth_action' ) ) {
+            if ( isset( $_POST['epod_authenticate'] ) ) {
+                epod_authenticate_with_podio();
+            } elseif ( isset( $_POST['epod_refresh_token'] ) ) {
+                epod_refresh_access_token();
+            } elseif ( isset( $_POST['epod_revoke_token'] ) ) {
+                epod_revoke_access_token();
+            }
+        }
+    }
+    ?>
 
     <?php if ( get_option( 'epod_debug_mode' ) ) : ?>
     <div class="notice notice-info" style="margin-top: 20px;">
@@ -450,6 +556,9 @@ function epod_render_settings_page() {
  * =========================================================
  */
 function epod_log( $message ) {
+    // Always log to error_log for debugging
+    error_log( 'Podio Integration: ' . $message );
+    
     if ( get_option( 'epod_debug_mode' ) ) {
         $debug_log = get_option( 'epod_debug_log', [] );
         $debug_log[] = '[' . date( 'Y-m-d H:i:s' ) . '] ' . $message;
@@ -463,39 +572,235 @@ function epod_log( $message ) {
 
 /**
  * =========================================================
+ * PODIO OAUTH2 AUTHENTICATION
+ * =========================================================
+ */
+
+/**
+ * Authenticate with Podio using password grant
+ */
+function epod_authenticate_with_podio() {
+    $client_id = get_option( 'epod_client_id' );
+    $client_secret = get_option( 'epod_client_secret' );
+    $username = get_option( 'epod_username' );
+    $password = get_option( 'epod_password' );
+    
+    if ( empty( $client_id ) || empty( $client_secret ) || empty( $username ) || empty( $password ) ) {
+        epod_log( 'ERROR: Missing credentials for Podio authentication' );
+        add_settings_error( 'epod_settings', 'epod_auth_error', 'Please fill in all Podio credentials (Client ID, Client Secret, Username, and Password) before authenticating.', 'error' );
+        return false;
+    }
+    
+    $url = 'https://podio.com/oauth/token';
+    
+    $args = [
+        'headers' => [
+            'Content-Type' => 'application/x-www-form-urlencoded',
+        ],
+        'body' => http_build_query( [
+            'grant_type'    => 'password',
+            'client_id'     => $client_id,
+            'client_secret' => $client_secret,
+            'username'      => $username,
+            'password'      => $password,
+        ] ),
+        'timeout' => 30,
+    ];
+    
+    epod_log( 'Authenticating with Podio OAuth2...' );
+    
+    $response = wp_remote_post( $url, $args );
+    
+    if ( is_wp_error( $response ) ) {
+        epod_log( 'ERROR: Authentication failed: ' . $response->get_error_message() );
+        add_settings_error( 'epod_settings', 'epod_auth_error', 'Authentication failed: ' . $response->get_error_message(), 'error' );
+        return false;
+    }
+    
+    $response_code = wp_remote_retrieve_response_code( $response );
+    $response_body = wp_remote_retrieve_body( $response );
+    $data = json_decode( $response_body, true );
+    
+    if ( $response_code === 200 && isset( $data['access_token'] ) ) {
+        update_option( 'epod_access_token', $data['access_token'] );
+        
+        if ( isset( $data['refresh_token'] ) ) {
+            update_option( 'epod_refresh_token', $data['refresh_token'] );
+        }
+        
+        $expires_in = isset( $data['expires_in'] ) ? $data['expires_in'] : 3600; // Default to 1 hour
+        update_option( 'epod_token_expires', time() + $expires_in );
+        
+        epod_log( 'SUCCESS: Authenticated with Podio. Token expires in ' . $expires_in . ' seconds' );
+        add_settings_error( 'epod_settings', 'epod_auth_success', 'Successfully authenticated with Podio! Token will expire in ' . human_time_diff( time(), time() + $expires_in ) . '.', 'success' );
+        
+        return true;
+    } else {
+        $error_msg = 'Authentication failed. ';
+        if ( isset( $data['error_description'] ) ) {
+            $error_msg .= $data['error_description'];
+        } elseif ( isset( $data['error'] ) ) {
+            $error_msg .= $data['error'];
+        }
+        
+        epod_log( 'ERROR: ' . $error_msg );
+        add_settings_error( 'epod_settings', 'epod_auth_error', $error_msg, 'error' );
+        
+        return false;
+    }
+}
+
+/**
+ * Refresh access token using refresh token
+ */
+function epod_refresh_access_token() {
+    $client_id = get_option( 'epod_client_id' );
+    $client_secret = get_option( 'epod_client_secret' );
+    $refresh_token = get_option( 'epod_refresh_token' );
+    
+    if ( empty( $client_id ) || empty( $client_secret ) || empty( $refresh_token ) ) {
+        epod_log( 'ERROR: Missing credentials for token refresh' );
+        add_settings_error( 'epod_settings', 'epod_refresh_error', 'Missing credentials for token refresh.', 'error' );
+        return false;
+    }
+    
+    $url = 'https://podio.com/oauth/token';
+    
+    $args = [
+        'headers' => [
+            'Content-Type' => 'application/x-www-form-urlencoded',
+        ],
+        'body' => http_build_query( [
+            'grant_type'    => 'refresh_token',
+            'client_id'     => $client_id,
+            'client_secret' => $client_secret,
+            'refresh_token' => $refresh_token,
+        ] ),
+        'timeout' => 30,
+    ];
+    
+    epod_log( 'Refreshing Podio access token...' );
+    
+    $response = wp_remote_post( $url, $args );
+    
+    if ( is_wp_error( $response ) ) {
+        epod_log( 'ERROR: Token refresh failed: ' . $response->get_error_message() );
+        add_settings_error( 'epod_settings', 'epod_refresh_error', 'Token refresh failed: ' . $response->get_error_message(), 'error' );
+        return false;
+    }
+    
+    $response_code = wp_remote_retrieve_response_code( $response );
+    $response_body = wp_remote_retrieve_body( $response );
+    $data = json_decode( $response_body, true );
+    
+    if ( $response_code === 200 && isset( $data['access_token'] ) ) {
+        update_option( 'epod_access_token', $data['access_token'] );
+        
+        if ( isset( $data['refresh_token'] ) ) {
+            update_option( 'epod_refresh_token', $data['refresh_token'] );
+        }
+        
+        $expires_in = isset( $data['expires_in'] ) ? $data['expires_in'] : 3600;
+        update_option( 'epod_token_expires', time() + $expires_in );
+        
+        epod_log( 'SUCCESS: Token refreshed. New token expires in ' . $expires_in . ' seconds' );
+        add_settings_error( 'epod_settings', 'epod_refresh_success', 'Token refreshed successfully! New token expires in ' . human_time_diff( time(), time() + $expires_in ) . '.', 'success' );
+        
+        return true;
+    } else {
+        $error_msg = 'Token refresh failed. ';
+        if ( isset( $data['error_description'] ) ) {
+            $error_msg .= $data['error_description'];
+        } elseif ( isset( $data['error'] ) ) {
+            $error_msg .= $data['error'];
+        }
+        
+        epod_log( 'ERROR: ' . $error_msg );
+        add_settings_error( 'epod_settings', 'epod_refresh_error', $error_msg, 'error' );
+        
+        // Clear tokens if refresh failed
+        delete_option( 'epod_access_token' );
+        delete_option( 'epod_refresh_token' );
+        delete_option( 'epod_token_expires' );
+        
+        return false;
+    }
+}
+
+/**
+ * Revoke access token
+ */
+function epod_revoke_access_token() {
+    $access_token = get_option( 'epod_access_token' );
+    
+    if ( empty( $access_token ) ) {
+        add_settings_error( 'epod_settings', 'epod_revoke_warning', 'No active token to revoke.', 'warning' );
+        return;
+    }
+    
+    // Podio doesn't have a standard token revocation endpoint
+    // We'll just clear the stored tokens
+    delete_option( 'epod_access_token' );
+    delete_option( 'epod_refresh_token' );
+    delete_option( 'epod_token_expires' );
+    
+    epod_log( 'Tokens revoked and cleared from database' );
+    add_settings_error( 'epod_settings', 'epod_revoke_success', 'Tokens revoked and cleared from database.', 'success' );
+}
+
+/**
+ * Get valid access token (checks expiration and refreshes if needed)
+ */
+function epod_get_valid_access_token() {
+    $access_token = get_option( 'epod_access_token' );
+    $refresh_token = get_option( 'epod_refresh_token' );
+    $token_expires = get_option( 'epod_token_expires' );
+    
+    // If no access token, try to authenticate
+    if ( empty( $access_token ) ) {
+        epod_log( 'WARNING: No access token available' );
+        return false;
+    }
+    
+    // Check if token is expired or about to expire (within 5 minutes)
+    $current_time = time();
+    if ( $token_expires && ( $token_expires - $current_time ) < 300 ) {
+        epod_log( 'Token expired or about to expire. Attempting refresh...' );
+        
+        if ( ! empty( $refresh_token ) ) {
+            // Refresh token in background
+            add_action( 'shutdown', 'epod_refresh_access_token_background' );
+            return $access_token; // Return current token, refresh will happen after response
+        } else {
+            epod_log( 'ERROR: Token expired and no refresh token available' );
+            return false;
+        }
+    }
+    
+    return $access_token;
+}
+
+/**
+ * Refresh token in background (non-blocking)
+ */
+function epod_refresh_access_token_background() {
+    epod_refresh_access_token();
+}
+
+/**
+ * =========================================================
  * PODIO API FUNCTIONS
  * =========================================================
  */
 
 /**
- * Get Podio Access Token
- */
-function epod_get_access_token() {
-    $client_id = get_option( 'epod_client_id' );
-    $client_secret = get_option( 'epod_client_secret' );
-    $app_token = get_option( 'epod_app_token' );
-    
-    if ( empty( $client_id ) || empty( $client_secret ) ) {
-        epod_log( 'WARNING: Missing Podio Client ID or Secret' );
-    }
-    
-    if ( empty( $app_token ) ) {
-        epod_log( 'ERROR: Missing Podio App Token' );
-        return false;
-    }
-    
-    // Using App Token directly for simplicity
-    return $app_token;
-}
-
-/**
- * Make API request to Podio
+ * Make API request to Podio with proper authentication
  */
 function epod_api_request( $endpoint, $method = 'GET', $data = [] ) {
-    $access_token = epod_get_access_token();
+    $access_token = epod_get_valid_access_token();
     
     if ( ! $access_token ) {
-        return new WP_Error( 'no_token', 'Podio access token missing' );
+        return new WP_Error( 'no_token', 'Podio access token missing or expired' );
     }
     
     $base_url = 'https://api.podio.com';
@@ -517,7 +822,7 @@ function epod_api_request( $endpoint, $method = 'GET', $data = [] ) {
     
     epod_log( "Podio API Request: $method $url" );
     if ( ! empty( $data ) ) {
-        epod_log( "Request Data: " . json_encode( $data ) );
+        epod_log( "Request Data: " . wp_json_encode( $data ) );
     }
     
     switch ( $method ) {
@@ -555,19 +860,6 @@ function epod_api_request( $endpoint, $method = 'GET', $data = [] ) {
 }
 
 /**
- * Get Podio app fields
- */
-function epod_get_app_fields( $app_id ) {
-    $result = epod_api_request( "/item/app/$app_id/field/" );
-    
-    if ( ! is_wp_error( $result ) && $result['code'] === 200 ) {
-        return $result['body'];
-    }
-    
-    return false;
-}
-
-/**
  * Create item in Podio app
  */
 function epod_create_item( $app_id, $fields ) {
@@ -575,7 +867,7 @@ function epod_create_item( $app_id, $fields ) {
         'fields' => $fields,
     ];
     
-    epod_log( "Creating item in app $app_id with data: " . json_encode( $data ) );
+    epod_log( "Creating item in app $app_id with data: " . wp_json_encode( $data ) );
     
     $result = epod_api_request( "/item/app/$app_id/", 'POST', $data );
     
@@ -583,54 +875,30 @@ function epod_create_item( $app_id, $fields ) {
 }
 
 /**
- * Get category option ID
- */
-function epod_get_category_option_id( $app_id, $field_external_id, $option_label ) {
-    if ( empty( $option_label ) ) {
-        return null;
-    }
-    
-    // First, get the field definition
-    $field_result = epod_api_request( "/item/field/$field_external_id" );
-    
-    if ( ! is_wp_error( $field_result ) && $field_result['code'] === 200 ) {
-        $field = $field_result['body'];
-        
-        if ( isset( $field['config']['settings']['options'] ) ) {
-            foreach ( $field['config']['settings']['options'] as $option ) {
-                if ( strcasecmp( $option['text'], $option_label ) === 0 ) {
-                    return $option['id'];
-                }
-            }
-        }
-    }
-    
-    epod_log( "WARNING: Could not find option ID for '$option_label' in field '$field_external_id'" );
-    return null;
-}
-
-/**
  * =========================================================
- * ELEMENTOR FORM HANDLER - UPDATED WITH CORRECT MAPPINGS
+ * ELEMENTOR FORM HANDLER - FIXED VERSION
  * =========================================================
  */
-add_action( 'elementor_pro/forms/process', 'epod_handle_elementor_submission', 10, 2 );
+add_action( 'elementor_pro/forms/new_record', 'epod_handle_elementor_submission', 20, 2 );
 
 function epod_handle_elementor_submission( $record, $handler ) {
+    // Log to PHP error log first for debugging
+    error_log( 'Podio Integration: Starting form submission handler' );
+    
     epod_log( '=== Elementor Form Submission Started ===' );
     
     /**
      * Get the target form name from settings
      */
-    $target_form_name = get_option( 'epod_form_name', 'New Form' );
+    $target_form_name = get_option( 'epod_form_name', 'Submit Deal' );
     
     // Try to get form name
     try {
-        $current_form_name = $record->get_form_settings( 'form_name' );
-        epod_log( 'Got form name: ' . $current_form_name );
+        $form_name = $record->get_form_settings( 'form_name' );
+        epod_log( 'Got form name: ' . $form_name );
         
-        if ( $current_form_name !== $target_form_name ) {
-            epod_log( 'Skipping form - name does not match target' );
+        if ( $form_name !== $target_form_name ) {
+            epod_log( 'Skipping form - name does not match target. Target: ' . $target_form_name . ', Got: ' . $form_name );
             return;
         }
     } catch ( Exception $e ) {
@@ -642,31 +910,43 @@ function epod_handle_elementor_submission( $record, $handler ) {
      * Check if Podio credentials are configured
      */
     $app_id = get_option( 'epod_app_id' );
-    $app_token = get_option( 'epod_app_token' );
+    $access_token = epod_get_valid_access_token();
     
-    if ( empty( $app_id ) || empty( $app_token ) ) {
-        $error_msg = 'Podio App ID or Token missing. Please configure it in Settings > Podio Integration.';
+    if ( empty( $app_id ) ) {
+        $error_msg = 'Podio App ID missing. Please configure it in Settings > Podio Integration.';
         epod_log( 'ERROR: ' . $error_msg );
-        error_log( $error_msg );
-        return;
+        return; // Don't break the form submission, just log and return
+    }
+    
+    if ( empty( $access_token ) ) {
+        $error_msg = 'Podio authentication failed. Please authenticate in Settings > Podio Integration.';
+        epod_log( 'ERROR: ' . $error_msg );
+        return; // Don't break the form submission, just log and return
     }
     
     epod_log( 'Processing form for Podio integration...' );
     epod_log( 'Using App ID: ' . $app_id );
     
     /**
-     * Get form fields
+     * Get form fields - SAFELY
      */
+    $raw_fields = $record->get( 'fields' );
     $fields = [];
-    foreach ( $record->get( 'fields' ) as $id => $field ) {
-        $clean_id = str_replace( 'form-field-', '', $id );
-        $fields[ $clean_id ] = sanitize_text_field( $field['value'] );
+    
+    if ( ! empty( $raw_fields ) && is_array( $raw_fields ) ) {
+        foreach ( $raw_fields as $id => $field ) {
+            if ( isset( $field['value'] ) ) {
+                $clean_id = str_replace( ['form-field-', 'form_fields[', ']'], '', $id );
+                $fields[ $clean_id ] = sanitize_text_field( $field['value'] );
+            }
+        }
     }
     
     epod_log( 'Form Fields Received: ' . print_r( $fields, true ) );
     
     /**
-     * Map Elementor fields to Podio fields using your actual Podio External IDs
+     * Map Elementor fields to Podio fields
+     * IMPORTANT: Update the option IDs based on your actual Podio app!
      */
     $podio_fields = [];
     
@@ -675,6 +955,11 @@ function epod_handle_elementor_submission( $record, $handler ) {
         $podio_fields[] = [
             'external_id' => 'title',
             'values' => $fields['name']
+        ];
+    } elseif ( ! empty( $fields['title'] ) ) {
+        $podio_fields[] = [
+            'external_id' => 'title',
+            'values' => $fields['title']
         ];
     }
     
@@ -706,23 +991,20 @@ function epod_handle_elementor_submission( $record, $handler ) {
     }
     
     // 5. How often do you do deals? → "how-often-do-you-do-deals" (category field)
-    // Note: This needs to be mapped to the option ID in Podio
     if ( ! empty( $fields['howOften'] ) ) {
-        // You'll need to map these options to Podio option IDs
+        // Map options to Podio option IDs - YOU NEED TO UPDATE THESE!
         $deal_frequency_options = [
-            'First deal / learning' => 1, // Replace with actual Podio option ID
-            '1–2 deals per year' => 2,    // Replace with actual Podio option ID
-            '1–2 deals per quarter' => 3, // Replace with actual Podio option ID
-            'Monthly or more' => 4,       // Replace with actual Podio option ID
+            'First deal / learning' => 1, // REPLACE with actual Podio option ID
+            '1–2 deals per year' => 2,    // REPLACE with actual Podio option ID
+            '1–2 deals per quarter' => 3, // REPLACE with actual Podio option ID
+            'Monthly or more' => 4,       // REPLACE with actual Podio option ID
         ];
         
         $selected_option = $fields['howOften'];
-        $option_id = isset( $deal_frequency_options[ $selected_option ] ) ? $deal_frequency_options[ $selected_option ] : null;
-        
-        if ( $option_id ) {
+        if ( isset( $deal_frequency_options[ $selected_option ] ) ) {
             $podio_fields[] = [
                 'external_id' => 'how-often-do-you-do-deals',
-                'values' => $option_id
+                'values' => $deal_frequency_options[ $selected_option ]
             ];
         } else {
             epod_log( "WARNING: Unknown deal frequency option: $selected_option" );
@@ -751,19 +1033,17 @@ function epod_handle_elementor_submission( $record, $handler ) {
     // 8. Estimated Repairs → "estimated-repairs-optional-2" (category field)
     if ( ! empty( $fields['estimatedRepairs'] ) ) {
         $repair_options = [
-            'Turn-key' => 1,      // Replace with actual Podio option ID
-            'Light Rehab' => 2,   // Replace with actual Podio option ID
-            'Medium Rehab' => 3,  // Replace with actual Podio option ID
-            'Full Rehab' => 4,    // Replace with actual Podio option ID
+            'Turn-key' => 1,      // REPLACE with actual Podio option ID
+            'Light Rehab' => 2,   // REPLACE with actual Podio option ID
+            'Medium Rehab' => 3,  // REPLACE with actual Podio option ID
+            'Full Rehab' => 4,    // REPLACE with actual Podio option ID
         ];
         
         $selected_option = $fields['estimatedRepairs'];
-        $option_id = isset( $repair_options[ $selected_option ] ) ? $repair_options[ $selected_option ] : null;
-        
-        if ( $option_id ) {
+        if ( isset( $repair_options[ $selected_option ] ) ) {
             $podio_fields[] = [
                 'external_id' => 'estimated-repairs-optional-2',
-                'values' => $option_id
+                'values' => $repair_options[ $selected_option ]
             ];
         } else {
             epod_log( "WARNING: Unknown repair option: $selected_option" );
@@ -773,20 +1053,18 @@ function epod_handle_elementor_submission( $record, $handler ) {
     // 9. Deal Type → "deal-type-optional-2" (category field)
     if ( ! empty( $fields['dealType'] ) ) {
         $deal_type_options = [
-            'Assignment' => 1,        // Replace with actual Podio option ID
-            'Double Close' => 2,      // Replace with actual Podio option ID
-            'Novation' => 3,          // Replace with actual Podio option ID
-            'Creative Finance' => 4,  // Replace with actual Podio option ID
-            'Unsure' => 5,            // Replace with actual Podio option ID
+            'Assignment' => 1,        // REPLACE with actual Podio option ID
+            'Double Close' => 2,      // REPLACE with actual Podio option ID
+            'Novation' => 3,          // REPLACE with actual Podio option ID
+            'Creative Finance' => 4,  // REPLACE with actual Podio option ID
+            'Unsure' => 5,            // REPLACE with actual Podio option ID
         ];
         
         $selected_option = $fields['dealType'];
-        $option_id = isset( $deal_type_options[ $selected_option ] ) ? $deal_type_options[ $selected_option ] : null;
-        
-        if ( $option_id ) {
+        if ( isset( $deal_type_options[ $selected_option ] ) ) {
             $podio_fields[] = [
                 'external_id' => 'deal-type-optional-2',
-                'values' => $option_id
+                'values' => $deal_type_options[ $selected_option ]
             ];
         } else {
             epod_log( "WARNING: Unknown deal type option: $selected_option" );
@@ -807,54 +1085,60 @@ function epod_handle_elementor_submission( $record, $handler ) {
         }
     }
     
-    // 11. Upload Contract/Photos → Podio file field (need to know the external_id)
-    // Note: Your Podio app doesn't seem to have a file field in the screenshot
-    // If you have one, add it here with the correct external_id
-    
     /**
-     * Create item in Podio
+     * Create item in Podio - ASYNCHRONOUSLY to not block form submission
      */
     if ( ! empty( $podio_fields ) ) {
         epod_log( 'Creating Podio item with ' . count( $podio_fields ) . ' fields' );
-        epod_log( 'Podio fields data: ' . json_encode( $podio_fields ) );
         
-        $result = epod_create_item( $app_id, $podio_fields );
-        
-        if ( ! is_wp_error( $result ) ) {
-            if ( in_array( $result['code'], [ 200, 201 ] ) ) {
-                $item_id = $result['body']['item_id'] ?? null;
-                if ( $item_id ) {
-                    epod_log( '✅ SUCCESS: Created Podio item with ID: ' . $item_id );
-                    
-                    // Add success response
-                    $handler->add_response_data( true, [
-                        'message' => 'Your submission has been sent to Podio successfully!',
-                    ]);
-                } else {
-                    epod_log( 'WARNING: Item created but no item_id in response' );
-                }
-            } else {
-                $error_msg = 'Failed to create Podio item. Status: ' . $result['code'];
-                if ( isset( $result['body']['error_description'] ) ) {
-                    $error_msg .= ' - ' . $result['body']['error_description'];
-                }
-                if ( isset( $result['body']['error'] ) ) {
-                    $error_msg .= ' - ' . $result['body']['error'];
-                }
-                epod_log( 'ERROR: ' . $error_msg );
-                
-                // Add error response
-                $handler->add_error( 'podio_error', 'There was an error submitting to Podio. Please try again.' );
-            }
-        } else {
-            epod_log( 'ERROR: Podio API request failed: ' . $result->get_error_message() );
-            $handler->add_error( 'podio_error', 'There was an error connecting to Podio. Please try again.' );
-        }
+        // Schedule async processing to avoid blocking form submission
+        add_action( 'shutdown', function() use ( $app_id, $podio_fields ) {
+            epod_process_podio_submission( $app_id, $podio_fields );
+        });
     } else {
         epod_log( 'WARNING: No fields to send to Podio' );
     }
     
     epod_log( '=== Elementor Form Submission Completed ===' );
+}
+
+/**
+ * Process Podio submission asynchronously
+ */
+function epod_process_podio_submission( $app_id, $podio_fields ) {
+    epod_log( 'Starting async Podio submission...' );
+    
+    $result = epod_create_item( $app_id, $podio_fields );
+    
+    if ( ! is_wp_error( $result ) ) {
+        if ( in_array( $result['code'], [ 200, 201 ] ) ) {
+            $item_id = $result['body']['item_id'] ?? null;
+            if ( $item_id ) {
+                epod_log( '✅ SUCCESS: Created Podio item with ID: ' . $item_id );
+            } else {
+                epod_log( 'WARNING: Item created but no item_id in response' );
+            }
+        } else {
+            $error_msg = 'Failed to create Podio item. Status: ' . $result['code'];
+            if ( isset( $result['body']['error_description'] ) ) {
+                $error_msg .= ' - ' . $result['body']['error_description'];
+            }
+            if ( isset( $result['body']['error'] ) ) {
+                $error_msg .= ' - ' . $result['body']['error'];
+            }
+            epod_log( 'ERROR: ' . $error_msg );
+            
+            // If it's an authentication error, try to refresh token
+            if ( $result['code'] === 401 && isset( $result['body']['error'] ) && $result['body']['error'] === 'expired_token' ) {
+                epod_log( 'Token expired during submission, attempting refresh...' );
+                epod_refresh_access_token();
+            }
+        }
+    } else {
+        epod_log( 'ERROR: Podio API request failed: ' . $result->get_error_message() );
+    }
+    
+    epod_log( '=== Async Podio Submission Completed ===' );
 }
 
 /**
@@ -884,4 +1168,8 @@ register_deactivation_hook( __FILE__, 'epod_cleanup' );
 function epod_cleanup() {
     // Remove debug logs on deactivation
     delete_option( 'epod_debug_log' );
+    // Optionally clear tokens on deactivation
+    // delete_option( 'epod_access_token' );
+    // delete_option( 'epod_refresh_token' );
+    // delete_option( 'epod_token_expires' );
 }

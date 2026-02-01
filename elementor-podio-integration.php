@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Elementor → Podio Integration
  * Description: Sends Elementor form submissions to Podio.
- * Version: 1.1
+ * Version: 1.2
  * Author: Towfique Elahe
  * Author URI: https://towfiqueelahe.com/
  */
@@ -679,35 +679,35 @@ function epod_handle_elementor_submission( $record, $handler ) {
     }
     
     // 2. Phone field → "phone" (phone field)
-    if ( ! empty( $fields['field_69c49a7'] ) ) {
+    if ( ! empty( $fields['phone'] ) ) {
         $podio_fields[] = [
             'external_id' => 'phone',
             'values' => [[
                 'type' => 'mobile',
-                'value' => $fields['field_69c49a7']
+                'value' => $fields['phone']
             ]]
         ];
     }
     
     // 3. Property Address field → "property-address-or-city-state" (text field)
-    if ( ! empty( $fields['field_2bd5f34'] ) ) {
+    if ( ! empty( $fields['propertyAddress'] ) ) {
         $podio_fields[] = [
             'external_id' => 'property-address-or-city-state',
-            'values' => $fields['field_2bd5f34']
+            'values' => $fields['propertyAddress']
         ];
     }
     
     // 4. Asking Price field → "asking-price" (text field)
-    if ( ! empty( $fields['field_e709b60'] ) ) {
+    if ( ! empty( $fields['askingPrice'] ) ) {
         $podio_fields[] = [
             'external_id' => 'asking-price',
-            'values' => $fields['field_e709b60']
+            'values' => $fields['askingPrice']
         ];
     }
     
     // 5. How often do you do deals? → "how-often-do-you-do-deals" (category field)
     // Note: This needs to be mapped to the option ID in Podio
-    if ( ! empty( $fields['field_7a0c673'] ) ) {
+    if ( ! empty( $fields['howOften'] ) ) {
         // You'll need to map these options to Podio option IDs
         $deal_frequency_options = [
             'First deal / learning' => 1, // Replace with actual Podio option ID
@@ -716,7 +716,7 @@ function epod_handle_elementor_submission( $record, $handler ) {
             'Monthly or more' => 4,       // Replace with actual Podio option ID
         ];
         
-        $selected_option = $fields['field_7a0c673'];
+        $selected_option = $fields['howOften'];
         $option_id = isset( $deal_frequency_options[ $selected_option ] ) ? $deal_frequency_options[ $selected_option ] : null;
         
         if ( $option_id ) {
@@ -741,15 +741,15 @@ function epod_handle_elementor_submission( $record, $handler ) {
     }
     
     // 7. ARV field → "arv-optional" (text field)
-    if ( ! empty( $fields['field_c20bd4a'] ) ) {
+    if ( ! empty( $fields['arv'] ) ) {
         $podio_fields[] = [
             'external_id' => 'arv-optional',
-            'values' => $fields['field_c20bd4a']
+            'values' => $fields['arv']
         ];
     }
     
     // 8. Estimated Repairs → "estimated-repairs-optional-2" (category field)
-    if ( ! empty( $fields['field_99d4db5'] ) ) {
+    if ( ! empty( $fields['estimatedRepairs'] ) ) {
         $repair_options = [
             'Turn-key' => 1,      // Replace with actual Podio option ID
             'Light Rehab' => 2,   // Replace with actual Podio option ID
@@ -757,7 +757,7 @@ function epod_handle_elementor_submission( $record, $handler ) {
             'Full Rehab' => 4,    // Replace with actual Podio option ID
         ];
         
-        $selected_option = $fields['field_99d4db5'];
+        $selected_option = $fields['estimatedRepairs'];
         $option_id = isset( $repair_options[ $selected_option ] ) ? $repair_options[ $selected_option ] : null;
         
         if ( $option_id ) {
@@ -771,7 +771,7 @@ function epod_handle_elementor_submission( $record, $handler ) {
     }
     
     // 9. Deal Type → "deal-type-optional-2" (category field)
-    if ( ! empty( $fields['field_ee4e4e4'] ) ) {
+    if ( ! empty( $fields['dealType'] ) ) {
         $deal_type_options = [
             'Assignment' => 1,        // Replace with actual Podio option ID
             'Double Close' => 2,      // Replace with actual Podio option ID
@@ -780,7 +780,7 @@ function epod_handle_elementor_submission( $record, $handler ) {
             'Unsure' => 5,            // Replace with actual Podio option ID
         ];
         
-        $selected_option = $fields['field_ee4e4e4'];
+        $selected_option = $fields['dealType'];
         $option_id = isset( $deal_type_options[ $selected_option ] ) ? $deal_type_options[ $selected_option ] : null;
         
         if ( $option_id ) {
@@ -794,8 +794,8 @@ function epod_handle_elementor_submission( $record, $handler ) {
     }
     
     // 10. Timeline to Close → "timeline-to-close-optional-2" (date field)
-    if ( ! empty( $fields['field_827b0cf'] ) ) {
-        $date_value = epod_format_date_for_podio( $fields['field_827b0cf'] );
+    if ( ! empty( $fields['closeTimeline'] ) ) {
+        $date_value = epod_format_date_for_podio( $fields['closeTimeline'] );
         if ( $date_value ) {
             $podio_fields[] = [
                 'external_id' => 'timeline-to-close-optional-2',
